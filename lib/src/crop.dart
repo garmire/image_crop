@@ -15,6 +15,12 @@ enum _CropAction { none, moving, cropping, scaling }
 
 enum _CropHandleSide { none, topLeft, topRight, bottomLeft, bottomRight }
 
+typedef CropOverlayBuilder = Widget Function(
+  BuildContext context,
+  bool hasCrop,
+  VoidCallback resetCrop,
+);
+
 /// Model containing all the internal parameters of the [Crop] widget
 class CropInternal {
   final Rect view, area;
@@ -45,6 +51,8 @@ class Crop extends StatefulWidget {
   /// To initialize the crop view with data programmatically
   final CropInternal? initialParam;
 
+  final CropOverlayBuilder? cropOverlayBuilder;
+
   final Size size;
   final Widget child;
 
@@ -57,6 +65,7 @@ class Crop extends StatefulWidget {
     this.alwaysShowGrid = false,
     this.disableResize = false,
     this.backgroundColor = _kCropBackgroundColor,
+    this.cropOverlayBuilder,
     this.initialParam,
   })  : assert(size != Size.zero, 'Size cannot be zero.'),
         assert(size != Size.infinite, 'Size cannot be infinite.'),
@@ -140,8 +149,7 @@ class CropState extends State<Crop> with TickerProviderStateMixin {
         widget.size != oldWidget.size) {
       _updateImage();
     } else if (widget.aspectRatio != oldWidget.aspectRatio) {
-      _scale = 1.0;
-      WidgetsBinding.instance.addPostFrameCallback((_) => _updateView());
+      _reset();
     }
     if (widget.alwaysShowGrid != oldWidget.alwaysShowGrid) {
       if (widget.alwaysShowGrid) {
@@ -153,39 +161,49 @@ class CropState extends State<Crop> with TickerProviderStateMixin {
   }
 
   @override
-  Widget build(BuildContext context) => ConstrainedBox(
-        constraints: const BoxConstraints.expand(),
-        child: Listener(
-          onPointerDown: (event) => pointers++,
-          onPointerUp: (event) => pointers = 0,
-          child: GestureDetector(
-            key: _surfaceKey,
-            behavior: HitTestBehavior.opaque,
-            onScaleStart: _isEnabled ? _handleScaleStart : null,
-            onScaleUpdate: _isEnabled ? _handleScaleUpdate : null,
-            onScaleEnd: _isEnabled ? _handleScaleEnd : null,
-            child: CustomPaint(
-              foregroundPainter: _CropPainter(
-                ratio: _ratio,
-                view: _view,
-                area: _area,
-                scale: _scale,
-                active: _activeController.value,
-                backgroundColor: widget.backgroundColor,
-                disableResize: widget.disableResize,
-                cropHandleSize: cropHandleSize,
-              ),
-              child: CropTransform(
-                ratio: _ratio,
-                scale: _scale,
-                view: _view,
-                childSize: widget.size,
-                getRect: (size) => _getRect(size, cropHandleSize),
-                child: widget.child,
+  Widget build(BuildContext context) => Stack(
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints.expand(),
+            child: Listener(
+              onPointerDown: (event) => pointers++,
+              onPointerUp: (event) => pointers = 0,
+              child: GestureDetector(
+                key: _surfaceKey,
+                behavior: HitTestBehavior.opaque,
+                onScaleStart: _isEnabled ? _handleScaleStart : null,
+                onScaleUpdate: _isEnabled ? _handleScaleUpdate : null,
+                onScaleEnd: _isEnabled ? _handleScaleEnd : null,
+                child: CustomPaint(
+                  foregroundPainter: _CropPainter(
+                    ratio: _ratio,
+                    view: _view,
+                    area: _area,
+                    scale: _scale,
+                    active: _activeController.value,
+                    backgroundColor: widget.backgroundColor,
+                    disableResize: widget.disableResize,
+                    cropHandleSize: cropHandleSize,
+                  ),
+                  child: CropTransform(
+                    ratio: _ratio,
+                    scale: _scale,
+                    view: _view,
+                    childSize: widget.size,
+                    getRect: (size) => _getRect(size, cropHandleSize),
+                    child: widget.child,
+                  ),
+                ),
               ),
             ),
           ),
-        ),
+          if (widget.cropOverlayBuilder != null)
+            widget.cropOverlayBuilder!(
+                context,
+                _scale != 1.0 ||
+                    (area != null && area!.center != Offset(.5, .5)),
+                _reset),
+        ],
       );
 
   void _activate() {
@@ -204,6 +222,16 @@ class CropState extends State<Crop> with TickerProviderStateMixin {
         duration: const Duration(milliseconds: 250),
       );
     }
+  }
+
+  void _reset() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      setState(() {
+        _scale = 1.0;
+      });
+
+      _updateView();
+    });
   }
 
   Size? get _boundaries {
